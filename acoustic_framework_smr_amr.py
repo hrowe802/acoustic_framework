@@ -1173,20 +1173,5 @@ if __name__ == "__main__":
     print(f"All output files saved to: {output_dir}")
 
 
-# In[36]:
-
-
-pip install ipynbname
-
-
-# In[37]:
-
-
-get_ipython().system('jupyter nbconvert --to script acoustic_.ipynb')
-
-
-# In[ ]:
-
-
 
 
