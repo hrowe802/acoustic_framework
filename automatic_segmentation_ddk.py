@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-DDK Segmentation with Robust Noise Detection and Removal
+DDK/AMR Segmentation with Robust Noise Detection and Removal
 Handles speech interference, background noise, and other artifacts
+Supports both DDK (pataka) and AMR (papapa, tatata, kakaka) patterns
 """
 
 import numpy as np
@@ -216,11 +217,12 @@ class NoiseDetector:
 
 class DDKSegmenter:
 
-    def __init__(self, target_fs=20000, enable_noise_removal=True):
+    def __init__(self, target_fs=20000, enable_noise_removal=True, pattern_type='pataka'):
         self.target_fs = target_fs
         self.trim_offset = 0
         self.enable_noise_removal = enable_noise_removal
         self.noise_detector = None
+        self.pattern_type = pattern_type
 
     def step1_preprocessing(self, audio_path):
         """Pre-processing: resample, normalize, denoise"""
@@ -419,7 +421,15 @@ class DDKSegmenter:
 
         print(f"  Found {len(peaks)} peaks")
 
-        if len(peaks) > 0 and len(peaks) % 3 == 0:
+        # Limit to first 10 repetitions (30 syllables)
+        max_syllables = 30
+        if len(peaks) > max_syllables:
+            print(f"  Limiting to first 10 repetitions ({max_syllables} syllables)")
+            peaks = peaks[:max_syllables]
+
+        if self.pattern_type in ['papapa', 'tatata', 'kakaka']:
+            print(f"  Detected {len(peaks)} AMR syllables")
+        elif len(peaks) > 0 and len(peaks) % 3 == 0:
             n_cycles = len(peaks) // 3
             print(f"  Detected {n_cycles} complete pa-ta-ka cycles")
 
@@ -448,9 +458,25 @@ class DDKSegmenter:
 
         median_energy = np.median(energy[energy > 0]) if np.any(energy > 0) else 0
 
+        # Determine consonant pattern based on pattern_type
+        if self.pattern_type == 'papapa':
+            consonant_sequence = ['p'] * len(peaks)
+        elif self.pattern_type == 'tatata':
+            consonant_sequence = ['t'] * len(peaks)
+        elif self.pattern_type == 'kakaka':
+            consonant_sequence = ['k'] * len(peaks)
+        else:  # pataka or badaga
+            consonant_sequence = [['p', 't', 'k'][i % 3] for i in range(len(peaks))]
+
         for i in range(len(peaks)):
             peak_sample = peaks[i]
-            consonant_type = ['p', 't', 'k'][i % 3]
+            consonant_type = consonant_sequence[i]
+
+            # For AMR, rep number is just the syllable number
+            if self.pattern_type in ['papapa', 'tatata', 'kakaka']:
+                rep = i + 1
+            else:
+                rep = (i // 3) + 1
 
             if i == 0:
                 search_start = max(0, peak_sample - int(0.15 * fs))
@@ -559,13 +585,37 @@ class DDKSegmenter:
         reps_tier = tgt.IntervalTier(0, textgrid_duration, 'reps')
         full_tier = tgt.IntervalTier(0, textgrid_duration, 'full')
 
-        consonants = ['p', 't', 'k'] if pattern_type == 'pataka' else ['b', 'd', 'g']
+        # Determine consonant pattern
+        if pattern_type == 'papapa':
+            consonants = ['p'] * len(segments)
+            rep_label_base = 'puhpuhpuh'
+            syllables_per_rep = 3
+        elif pattern_type == 'tatata':
+            consonants = ['t'] * len(segments)
+            rep_label_base = 'tuhtuhtuh'
+            syllables_per_rep = 3
+        elif pattern_type == 'kakaka':
+            consonants = ['k'] * len(segments)
+            rep_label_base = 'kuhkuhkuh'
+            syllables_per_rep = 3
+        elif pattern_type == 'badaga':
+            consonants = [['b', 'd', 'g'][i % 3] for i in range(len(segments))]
+            rep_label_base = 'buhduhguh'
+            syllables_per_rep = 3
+        else:  # pataka
+            consonants = [['p', 't', 'k'][i % 3] for i in range(len(segments))]
+            rep_label_base = 'puhtuhkuh'
+            syllables_per_rep = 3
 
         # VOWEL TIER - has gaps between VOT and vowel, and between syllables
         last_end = 0
         for i, seg in enumerate(segments):
-            c = consonants[i % 3]
-            rep = (i // 3) + 1
+            if pattern_type in ['papapa', 'tatata', 'kakaka']:
+                c = consonants[i]
+                rep = i + 1
+            else:
+                c = consonants[i]
+                rep = (i // 3) + 1
 
             burst_t = seg['start'] + time_offset
             vowel_t = seg['vowel_onset'] + time_offset
@@ -598,8 +648,12 @@ class DDKSegmenter:
         # CONSONANT TIER - continuous intervals spanning each syllable (no gaps within syllables)
         last_end = 0
         for i, seg in enumerate(segments):
-            c = consonants[i % 3]
-            rep = (i // 3) + 1
+            if pattern_type in ['papapa', 'tatata', 'kakaka']:
+                c = consonants[i]
+                rep = i + 1
+            else:
+                c = consonants[i]
+                rep = (i // 3) + 1
 
             burst_t = seg['start'] + time_offset
             end_t = seg['end'] + time_offset
@@ -619,11 +673,11 @@ class DDKSegmenter:
         # REPS TIER - continuous intervals spanning each repetition (no gaps within reps)
         if segments:
             last_end = 0
-            num_reps = len(segments) // 3
+            num_reps = len(segments) // syllables_per_rep
 
             for rep in range(num_reps):
-                idx_start = rep * 3
-                idx_end = min(idx_start + 3, len(segments))
+                idx_start = rep * syllables_per_rep
+                idx_end = min(idx_start + syllables_per_rep, len(segments))
 
                 rep_start = segments[idx_start]['start'] + time_offset
                 rep_end = segments[idx_end - 1]['end'] + time_offset
@@ -631,7 +685,7 @@ class DDKSegmenter:
                 if rep_start > last_end:
                     reps_tier.add_interval(tgt.Interval(last_end, rep_start, ""))
 
-                label = f'puhtuhkuh{rep + 1:02d}' if pattern_type == 'pataka' else f'buhduhguh{rep + 1:02d}'
+                label = f'{rep_label_base}{rep + 1:02d}'
                 reps_tier.add_interval(tgt.Interval(rep_start, rep_end, label))
                 last_end = rep_end
 
@@ -640,13 +694,16 @@ class DDKSegmenter:
         else:
             reps_tier.add_interval(tgt.Interval(0, textgrid_duration, ""))
 
-        # FULL TIER - one continuous interval for entire DDK sequence
+        # FULL TIER - one continuous interval for entire sequence
         if segments:
             first = segments[0]['start'] + time_offset
             last = segments[-1]['end'] + time_offset
 
             full_tier.add_interval(tgt.Interval(0, first, ""))
-            full_tier.add_interval(tgt.Interval(first, last, "DDKrate"))
+            if pattern_type in ['papapa', 'tatata', 'kakaka']:
+                full_tier.add_interval(tgt.Interval(first, last, "AMRrate"))
+            else:
+                full_tier.add_interval(tgt.Interval(first, last, "DDKrate"))
             full_tier.add_interval(tgt.Interval(last, textgrid_duration, ""))
         else:
             full_tier.add_interval(tgt.Interval(0, textgrid_duration, ""))
@@ -708,7 +765,7 @@ class DDKSegmenter:
     def process(self, audio_path, visualize=False):
         """Process audio through all steps"""
         print("=" * 60)
-        print("DDK Segmentation with Noise Detection")
+        print(f"DDK/AMR Segmentation with Noise Detection ({self.pattern_type})")
         print("=" * 60)
 
         signal, fs = self.step1_preprocessing(audio_path)
@@ -721,7 +778,7 @@ class DDKSegmenter:
             self.visualize_segmentation(signal, fs, smoothed, peaks, segments, vis_path)
 
         duration = len(signal) / fs
-        textgrid = self.create_textgrid(segments, duration)
+        textgrid = self.create_textgrid(segments, duration, pattern_type=self.pattern_type)
 
         output_path = Path(audio_path).with_suffix('.TextGrid')
         tgt.write_to_file(textgrid, str(output_path), format='long')
@@ -738,11 +795,14 @@ class DDKSegmenter:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='DDK Segmentation with Noise Detection')
-    parser.add_argument('audio_file', help='WAV file to process')
+    parser = argparse.ArgumentParser(description='DDK/AMR Segmentation with Noise Detection')
+    parser.add_argument('audio_file', help='Audio file to process (WAV)')
     parser.add_argument('--visualize', action='store_true', help='Create visualization')
     parser.add_argument('--target-fs', type=int, default=20000, help='Target sampling frequency')
     parser.add_argument('--no-denoise', action='store_true', help='Disable noise removal')
+    parser.add_argument('--pattern', type=str, default='pataka',
+                        choices=['pataka', 'papapa', 'tatata', 'kakaka', 'badaga'],
+                        help='Pattern type: pataka (DDK), papapa/tatata/kakaka (AMR), or badaga')
 
     args = parser.parse_args()
 
@@ -751,7 +811,8 @@ def main():
         return
 
     segmenter = DDKSegmenter(target_fs=args.target_fs,
-                             enable_noise_removal=not args.no_denoise)
+                             enable_noise_removal=not args.no_denoise,
+                             pattern_type=args.pattern)
     results = segmenter.process(args.audio_file, visualize=args.visualize)
 
     print("\n" + "=" * 60)
