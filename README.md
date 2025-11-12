@@ -1,4 +1,4 @@
-# 🎵 Acoustic Framework
+# Acoustic Framework
 
 An open-source framework for **speech acoustics analysis**, designed to streamline **automatic segmentation**, **acoustic feature extraction**, and **kinematic parameter computation** for speech and voice research.
 
@@ -6,17 +6,17 @@ Originally developed as a collaborative research tool, this framework provides m
 
 ---
 
-## 🧭 Overview
+## Overview
 
 The **Acoustic Framework** enables reproducible pipelines for analyzing speech recordings, segmenting utterances, and extracting a broad range of acoustic and kinematic features.
 
 It supports both **automated pipelines** (for batch analysis) and **manual, research-driven** workflows.
 
-This repository consolidates several acoustic analysis components under a clean, Pythonic package structure — making it easy to extend, test, and integrate into larger linguistic or clinical pipelines.
+This repository consolidates several acoustic analysis components under a clean, Pythonic package structure , making it easy to extend, test, and integrate into larger linguistic or clinical pipelines.
 
 ---
 
-## 🗂️ Project Structure
+## Project Structure
 
 ```text
 acoustic_framework/
